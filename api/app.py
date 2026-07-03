@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from redis import Redis
 from rq import Queue
-from rq.job import Job
+from rq.job import Job, JobStatus
 
 from .worker_tasks import run_pipeline
 
@@ -46,6 +46,17 @@ app.add_middleware(
 
 
 # ─── エンドポイント ──────────────────────────────────────────
+
+def _job_status(job: Job) -> str:
+    """job.get_status() は JobStatus(str, Enum) を返すが、__str__ は上書きされておらず
+    str() では 'JobStatus.FINISHED' のような形式になってしまう（rq 2.x で確認）。
+    ドキュメント上の値（'finished' 等）と一致させるため .value を使う。
+    """
+    status = job.get_status()
+    if isinstance(status, JobStatus):
+        return status.value
+    return str(status)
+
 
 async def _save_uploads(files: list[UploadFile], job_dir: Path, prefix: str) -> list[str]:
     """アップロードされたファイル群をジョブディレクトリに保存する。
@@ -159,7 +170,7 @@ def get_job_status(job_id: str):
     except Exception:
         raise HTTPException(status_code=404, detail="job not found")
 
-    status = str(job.get_status())  # JobStatus enum → 文字列
+    status = _job_status(job)
 
     return {
         "status": status,
@@ -187,7 +198,7 @@ def get_result(job_id: str):
     except Exception:
         raise HTTPException(status_code=404, detail="job not found")
 
-    status = str(job.get_status())
+    status = _job_status(job)
     if status != "finished":
         raise HTTPException(status_code=202, detail=f"job is not finished yet (status: {status})")
 
