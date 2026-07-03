@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>被害スコアマップ (OSM / Leaflet)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #map { position: absolute; top: 0; left: 0; right: 340px; bottom: 0; }
+  #panel { position: absolute; top: 0; right: 0; width: 340px; bottom: 0; background: #fafafa;
+           border-left: 1px solid #ddd; padding: 16px; overflow-y: auto; box-sizing: border-box; }
+
+  h1 { font-size: 17px; margin: 0 0 6px 0; }
+  h2 { font-size: 13px; margin: 18px 0 6px 0; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
+  .legend-item { display: flex; align-items: center; margin: 4px 0; font-size: 13px; }
+  .legend-color { width: 22px; height: 22px; margin-right: 8px; border-radius: 3px; border: 1px solid #999; }
+  .stat-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
+  .filter-buttons { display: flex; gap: 4px; margin-bottom: 8px; }
+  .filter-buttons button { flex: 1; padding: 6px 4px; border: 1px solid #ccc; border-radius: 4px;
+                            background: white; cursor: pointer; font-size: 12px; }
+  .filter-buttons button.active { background: #2c3e50; color: white; border-color: #2c3e50; }
+  #status { padding: 8px 10px; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 4px;
+            margin-bottom: 8px; font-size: 12px; }
+  .status-ok  { background: #d4edda !important; border-color: #c3e6cb !important; }
+  .status-err { background: #f8d7da !important; border-color: #f5c6cb !important; }
+  .control-row { font-size: 12px; margin: 4px 0; display: flex; align-items: center; gap: 6px; }
+  input[type=range] { flex: 1; }
+  .hint { font-size: 11px; color: #888; margin: 4px 0 8px 0; line-height: 1.4; }
+  .swatch-inline { display: inline-block; vertical-align: middle; width: 14px; height: 14px; border-radius: 2px; margin-right: 4px; }
+  .leaflet-popup-content dt { font-weight: 600; color: #666; margin-top: 4px; font-size: 11px; }
+  .leaflet-popup-content dd { margin: 0 0 2px 0; font-size: 12px; }
+
+  /* ── アップロードフォーム ── */
+  .upload-section { display: none; }
+  .upload-section.active { display: block; }
+  .file-row { margin-bottom: 8px; }
+  .file-row label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; color: #444; }
+  .file-row input[type=file] { font-size: 12px; width: 100%; }
+  .config-row { margin-bottom: 8px; }
+  .config-row label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; color: #444; }
+  .config-row input[type=number], .config-row select {
+    width: 100%; font-size: 12px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;
+  }
+  #btn-submit { width: 100%; padding: 10px; background: #2980b9; color: white; border: none;
+                border-radius: 5px; font-size: 14px; cursor: pointer; margin-top: 8px; }
+  #btn-submit:hover { background: #1f6fa0; }
+  #btn-submit:disabled { background: #aaa; cursor: not-allowed; }
+
+  /* ── 進捗表示 ── */
+  .progress-section { display: none; }
+  .progress-section.active { display: block; }
+  .progress-bar-wrap { background: #e9ecef; border-radius: 6px; height: 10px; margin: 8px 0; overflow: hidden; }
+  .progress-bar { background: #2980b9; height: 100%; width: 0%; transition: width 0.4s ease; border-radius: 6px; }
+  #progress-step { font-size: 12px; color: #555; min-height: 1.4em; }
+  #btn-new-job { width: 100%; padding: 8px; background: #eee; border: 1px solid #ccc;
+                 border-radius: 5px; font-size: 13px; cursor: pointer; margin-top: 10px; display: none; }
+
+  /* ── 地図コントロール ── */
+  .map-section { display: none; }
+  .map-section.active { display: block; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<aside id="panel">
+  <h1>被害スコアマップ (OSM)</h1>
+
+  <div id="status">準備中…</div>
+
+  <!-- ════ 画面1: アップロード ════ -->
+  <div id="screen-upload" class="upload-section active">
+    <p class="hint">LAS/LAZ ファイルをアップロードしてサーバーで解析します。</p>
+
+    <h2>ファイル選択</h2>
+    <div class="file-row">
+      <label>被災前 (pre.las / .laz / .csv)</label>
+      <input type="file" id="input-pre" accept=".las,.laz,.csv" multiple>
+      <p class="hint">複数ファイル選択可（タイル分割データはまとめて1現場として結合されます）</p>
+    </div>
+    <div class="file-row">
+      <label>被災後 (post.las / .laz / .csv)</label>
+      <input type="file" id="input-post" accept=".las,.laz,.csv" multiple>
+      <p class="hint">複数ファイル選択可（タイル分割データはまとめて1現場として結合されます）</p>
+    </div>
+
+    <h2>基本設定</h2>
+    <div class="config-row">
+      <label>入力 EPSG コード（CRS）</label>
+      <input type="number" id="cfg-epsg" value="6677" min="1024" max="32767">
+    </div>
+    <div class="config-row">
+      <label>差分計算方法</label>
+      <select id="cfg-method">
+        <option value="dsm" selected>DSM 差分（推奨）</option>
+        <option value="m3c2" disabled>M3C2（未実装）</option>
+      </select>
+    </div>
+    <div class="config-row">
+      <label>DSM 解像度 (m)</label>
+      <input type="number" id="cfg-resolution" value="0.5" min="0.1" max="10" step="0.1">
+    </div>
+    <div class="config-row">
+      <label>集約単位</label>
+      <select id="cfg-unit">
+        <option value="grid" selected>グリッド</option>
+        <option value="building">建物ポリゴン（OSM）</option>
+      </select>
+    </div>
+    <div class="config-row">
+      <label>グリッドセルサイズ (m)</label>
+      <input type="number" id="cfg-cell-size" value="5" min="1" max="100">
+    </div>
+
+    <p class="hint">APIサーバーのURL（デフォルト: http://localhost:8000）</p>
+    <div class="config-row">
+      <input type="text" id="cfg-api-url" value="http://localhost:8000"
+             style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;">
+    </div>
+
+    <button id="btn-submit">解析を開始</button>
+  </div>
+
+  <!-- ════ 画面2: 進捗表示 ════ -->
+  <div id="screen-progress" class="progress-section">
+    <h2>処理中</h2>
+    <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+    <div id="progress-step">キューに追加しました…</div>
+    <p class="hint" id="progress-hint"></p>
+    <button id="btn-new-job">新しいジョブを投入</button>
+  </div>
+
+  <!-- ════ 画面3: 地図コントロール ════ -->
+  <div id="screen-map" class="map-section">
+    <h2>フィルタ</h2>
+    <div class="filter-buttons" id="filter-buttons">
+      <button data-min="0" class="active">全て</button>
+      <button data-min="1">≥1</button>
+      <button data-min="2">≥2</button>
+      <button data-min="3">3のみ</button>
+    </div>
+
+    <h2>ベース地図</h2>
+    <div class="control-row">
+      <label><input type="radio" name="basemap" value="osm" checked> OpenStreetMap</label>
+    </div>
+    <div class="control-row">
+      <label><input type="radio" name="basemap" value="gsi"> 地理院標準</label>
+    </div>
+    <div class="control-row">
+      <label><input type="radio" name="basemap" value="gsi_photo"> 地理院写真</label>
+    </div>
+
+    <h2>凡例</h2>
+    <div id="legend">
+      <div class="legend-item"><div class="legend-color" style="background:#2ecc71"></div>0: 変化なし</div>
+      <div class="legend-item"><div class="legend-color" style="background:#f1c40f"></div>1: 軽微</div>
+      <div class="legend-item"><div class="legend-color" style="background:#e67e22"></div>2: 中度</div>
+      <div class="legend-item"><div class="legend-color" style="background:#c0392b"></div>3: 甚大</div>
+    </div>
+
+    <h2>表示</h2>
+    <div class="control-row">
+      <label><input type="checkbox" id="show-borders" checked> セル境界</label>
+    </div>
+    <div class="control-row">
+      <span>不透明度</span>
+      <input type="range" id="opacity" min="0" max="100" value="60">
+      <span id="opacity-val">60%</span>
+    </div>
+
+    <h2>統計</h2>
+    <div id="stats">—</div>
+
+    <h2>選択セル</h2>
+    <div id="selected">クリックで詳細表示</div>
+
+    <button id="btn-new-job2" style="width:100%;padding:8px;background:#eee;border:1px solid #ccc;
+            border-radius:5px;font-size:13px;cursor:pointer;margin-top:16px;">
+      別のファイルを解析
+    </button>
+  </div>
+
+</aside>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ══════════════════════════════════════════════════════════
+//  定数・地図初期化
+// ══════════════════════════════════════════════════════════
+const COLORS = ["#2ecc71", "#f1c40f", "#e67e22", "#c0392b"];
+const DEFAULT_CENTER = [37.28, 136.73];
+
+const map = L.map("map", { center: DEFAULT_CENTER, zoom: 16 });
+
+const baseLayers = {
+  osm: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, attribution: '© OpenStreetMap contributors'
+  }),
+  gsi: L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", {
+    maxZoom: 18, attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院タイル</a>'
+  }),
+  gsi_photo: L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg", {
+    maxZoom: 18, attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院シームレス空中写真</a>'
+  })
+};
+let currentBase = baseLayers.osm.addTo(map);
+
+document.querySelectorAll('input[name="basemap"]').forEach(r => {
+  r.addEventListener("change", e => {
+    map.removeLayer(currentBase);
+    currentBase = baseLayers[e.target.value].addTo(map);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+//  画面切り替えヘルパー
+// ══════════════════════════════════════════════════════════
+function showScreen(name) {
+  // name: "upload" | "progress" | "map"
+  document.getElementById("screen-upload").classList.toggle("active", name === "upload");
+  document.getElementById("screen-progress").classList.toggle("active", name === "progress");
+  document.getElementById("screen-map").classList.toggle("active", name === "map");
+}
+
+function setStatus(msg, cls) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = "";
+  if (cls) el.classList.add("status-" + cls);
+}
+
+// ══════════════════════════════════════════════════════════
+//  ステップ → 進捗バー幅の変換
+// ══════════════════════════════════════════════════════════
+const STEP_PROGRESS = {
+  "1/7": 14, "2/7": 28, "3/7": 42, "4/7": 57, "5/7": 71, "6/7": 85, "7/7": 100
+};
+function stepToProgress(stepStr) {
+  // "3/7: Registration" → 42
+  const m = stepStr.match(/^(\d+\/7)/);
+  return m ? (STEP_PROGRESS[m[1]] || 0) : 0;
+}
+
+// ══════════════════════════════════════════════════════════
+//  地図描画
+// ══════════════════════════════════════════════════════════
+let dataLayer = null, allFeatures = [], currentMinScore = 0;
+
+function styleFn(feature) {
+  const s = Number(feature.properties.damage_score ?? 0);
+  const visible = s >= currentMinScore;
+  const op = parseInt(document.getElementById("opacity").value, 10) / 100;
+  const sb = document.getElementById("show-borders").checked;
+  return {
+    fillColor: COLORS[s] || "#aaa",
+    fillOpacity: visible ? op : 0,
+    color: "#222",
+    weight: (visible && sb) ? 0.4 : 0,
+    opacity: visible ? 0.8 : 0
+  };
+}
+
+function popupContent(p) {
+  const fmt = v => (typeof v === "number" && Number.isFinite(v)) ? v.toFixed(3) + " m" : "—";
+  const s = Number(p.damage_score ?? 0);
+  return `
+    <div style="min-width:180px;">
+      <h3 style="margin:0 0 6px 0;font-size:14px;">${p.id ?? "—"}</h3>
+      <dl style="margin:0;">
+        <dt>被害スコア</dt><dd><b style="color:${COLORS[s]};font-size:16px;">${s}</b></dd>
+        <dt>dz 平均</dt><dd>${fmt(p.dz_mean)}</dd>
+        <dt>dz 95%値 (|dz|)</dt><dd>${fmt(p.dz_p95)}</dd>
+        <dt>点数</dt><dd>${p.n_points ?? p.n_points_post ?? "—"}</dd>
+        <dt>有意性比</dt><dd>${p.significant_ratio ?? "—"}</dd>
+        <dt>集約方式</dt><dd>${p.method ?? "—"}</dd>
+      </dl>
+    </div>`;
+}
+
+function loadGeoJSON(gj, source) {
+  if (dataLayer) map.removeLayer(dataLayer);
+  allFeatures = gj.features || [];
+  dataLayer = L.geoJSON(gj, {
+    style: styleFn,
+    onEachFeature: (feature, layer) => {
+      layer.on("click", () => {
+        const html = popupContent(feature.properties || {});
+        layer.bindPopup(html, { maxWidth: 260 }).openPopup();
+        document.getElementById("selected").innerHTML = html;
+      });
+    }
+  }).addTo(map);
+  try { map.fitBounds(dataLayer.getBounds(), { padding: [20, 20] }); } catch (e) {}
+  updateStats();
+  setStatus(`${allFeatures.length} 件読み込み完了 (${source})`, "ok");
+  showScreen("map");
+}
+
+function updateStats() {
+  const c = [0,0,0,0];
+  let dzSum=0, dzN=0, dzMin=Infinity, dzMax=-Infinity;
+  allFeatures.forEach(f => {
+    const p = f.properties || {};
+    const s = Number(p.damage_score ?? 0);
+    if (s >= 0 && s < 4) c[s]++;
+    const dz = p.dz_mean;
+    if (typeof dz === "number" && Number.isFinite(dz)) {
+      dzSum += dz; dzN++;
+      if (dz < dzMin) dzMin = dz;
+      if (dz > dzMax) dzMax = dz;
+    }
+  });
+  const total = c.reduce((a,b)=>a+b,0) || 1;
+  const rows = c.map((cnt, i) =>
+    `<div class="stat-row"><span><span class="swatch-inline" style="background:${COLORS[i]}"></span>Score ${i}</span><b>${cnt} (${(100*cnt/total).toFixed(1)}%)</b></div>`
+  ).join("");
+  const dzInfo = dzN > 0
+    ? `<div class="stat-row" style="border-top:1px solid #ddd;padding-top:6px;margin-top:4px;">
+         <span>dz_mean 平均</span><b>${(dzSum/dzN).toFixed(2)} m</b></div>
+       <div class="stat-row"><span>dz_mean 範囲</span><b>${dzMin.toFixed(2)} 〜 ${dzMax.toFixed(2)} m</b></div>`
+    : "";
+  document.getElementById("stats").innerHTML =
+    `<div class="stat-row"><span>総数</span><b>${total}</b></div>` + rows + dzInfo;
+}
+
+function refreshStyle() { if (dataLayer) dataLayer.setStyle(styleFn); }
+
+document.querySelectorAll("#filter-buttons button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#filter-buttons button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    currentMinScore = parseInt(b.dataset.min, 10);
+    refreshStyle();
+  });
+});
+document.getElementById("show-borders").addEventListener("change", refreshStyle);
+document.getElementById("opacity").addEventListener("input", e => {
+  document.getElementById("opacity-val").textContent = e.target.value + "%";
+  refreshStyle();
+});
+
+// ══════════════════════════════════════════════════════════
+//  ジョブ投入 → ポーリング → 結果表示
+// ══════════════════════════════════════════════════════════
+let pollTimer = null;
+
+function apiBase() {
+  return (document.getElementById("cfg-api-url").value || "http://localhost:8000").replace(/\/$/, "");
+}
+
+document.getElementById("btn-submit").addEventListener("click", async () => {
+  const preFiles  = document.getElementById("input-pre").files;
+  const postFiles = document.getElementById("input-post").files;
+
+  if (!preFiles.length || !postFiles.length) {
+    setStatus("被災前・被災後のファイルを両方選択してください。", "err");
+    return;
+  }
+
+  const epsg       = parseInt(document.getElementById("cfg-epsg").value, 10);
+  const method     = document.getElementById("cfg-method").value;
+  const resolution = parseFloat(document.getElementById("cfg-resolution").value);
+  const unit       = document.getElementById("cfg-unit").value;
+  const cellSize   = parseFloat(document.getElementById("cfg-cell-size").value);
+
+  // config JSON を構築
+  const configObj = {
+    crs: { input_epsg: epsg, work_epsg: epsg, output_epsg: 4326 },
+    difference: { method, dsm: { resolution, method: "max" } },
+    aggregation: { unit, grid: { cell_size: cellSize, min_points: 10 } },
+    scoring: { thresholds: [0.3, 1.0, 3.0], use_significance: false }
+  };
+
+  // FormData を組み立て（multipart/form-data）。複数ファイルは同じキーで繰り返し append する。
+  const fd = new FormData();
+  for (const f of preFiles) fd.append("pre", f);
+  for (const f of postFiles) fd.append("post", f);
+  fd.append("config", JSON.stringify(configObj));
+
+  document.getElementById("btn-submit").disabled = true;
+  setStatus("サーバーにアップロード中…");
+  showScreen("progress");
+  document.getElementById("progress-bar").style.width = "5%";
+  document.getElementById("progress-step").textContent = "アップロード中…";
+
+  let jobId;
+  try {
+    const res = await fetch(`${apiBase()}/jobs`, { method: "POST", body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    jobId = data.job_id;
+  } catch (e) {
+    setStatus("投入失敗: " + e.message, "err");
+    showScreen("upload");
+    document.getElementById("btn-submit").disabled = false;
+    return;
+  }
+
+  setStatus(`ジョブ投入完了 (ID: ${jobId.slice(0,8)}…)`);
+  document.getElementById("progress-hint").textContent = `job_id: ${jobId}`;
+  startPolling(jobId);
+});
+
+function startPolling(jobId) {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`${apiBase()}/jobs/${jobId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const step = data.step || "";
+      const pct  = stepToProgress(step) || (data.status === "queued" ? 5 : 10);
+      document.getElementById("progress-bar").style.width = pct + "%";
+      document.getElementById("progress-step").textContent =
+        step || (data.status === "queued" ? "キュー待ち…" : "処理中…");
+      setStatus(`ステータス: ${data.status}`);
+
+      if (data.status === "finished") {
+        clearInterval(pollTimer);
+        document.getElementById("progress-bar").style.width = "100%";
+        document.getElementById("progress-step").textContent = "完了！結果を取得中…";
+        fetchResult(jobId);
+      } else if (data.status === "failed") {
+        clearInterval(pollTimer);
+        const errMsg = data.error ? `\n${data.error.slice(0, 200)}` : "";
+        setStatus("処理に失敗しました。" + errMsg, "err");
+        document.getElementById("progress-step").textContent = "エラーが発生しました";
+        document.getElementById("btn-new-job").style.display = "block";
+      }
+    } catch (e) {
+      // ネットワークエラーは無視して次のポーリングを待つ
+    }
+  }, 3000);  // 3 秒ごとにポーリング
+}
+
+async function fetchResult(jobId) {
+  try {
+    const res = await fetch(`${apiBase()}/jobs/${jobId}/result`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const gj = await res.json();
+    loadGeoJSON(gj, `job:${jobId.slice(0,8)}`);
+    document.getElementById("btn-submit").disabled = false;
+  } catch (e) {
+    setStatus("結果の取得に失敗しました: " + e.message, "err");
+    document.getElementById("btn-new-job").style.display = "block";
+  }
+}
+
+// 「新しいジョブを投入」ボタン
+document.getElementById("btn-new-job").addEventListener("click", () => {
+  clearInterval(pollTimer);
+  document.getElementById("btn-new-job").style.display = "none";
+  document.getElementById("btn-submit").disabled = false;
+  showScreen("upload");
+  setStatus("準備完了");
+});
+document.getElementById("btn-new-job2").addEventListener("click", () => {
+  clearInterval(pollTimer);
+  showScreen("upload");
+  setStatus("準備完了");
+});
+
+// ══════════════════════════════════════════════════════════
+//  初期表示
+// ══════════════════════════════════════════════════════════
+showScreen("upload");
+setStatus("ファイルを選択して解析を開始してください。");
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# Synthetic per-building scoring test.
+io:
+  pre_las: "data/pre_synthetic.las"
+  post_las: "data/post_synthetic.las"
+  output_dir: "outputs/synthetic_building"
+
+crs:
+  input_epsg: 6677
+  output_epsg: 4326
+  work_epsg: 6677
+
+preprocess:
+  sor:
+    enabled: false
+  voxel_size: null
+  ground_filter:
+    enabled: false
+  bbox: null
+
+registration:
+  enabled: false
+
+difference:
+  method: "dsm"
+  dsm:
+    resolution: 0.5
+    method: "max"
+
+scoring:
+  thresholds: [0.3, 1.0, 3.0]
+  use_significance: false
+  building_rules:
+    loss_ratio_collapse: 0.6
+    loss_ratio_min_dz: 1.5
+    min_pre_points: 30
+    thresholds: [0.3, 1.0, 3.0]
+
+aggregation:
+  unit: "building"
+  building:
+    source: "file"
+    file: "data/buildings_synthetic.geojson"
+    buffer: 0.0

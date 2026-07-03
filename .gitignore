@@ -1,0 +1,29 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── OS / エディタ ────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+
+# ─── Claude Code（ローカル限定の設定のみ除外） ─────────────
+.claude/settings.local.json
+
+# ─── パイプライン成果物・ローカル設定 ───────────────────────
+# config.example.yaml はテンプレートとして追跡するが、
+# 実際のパス等を書き込む config.yaml はローカル専用。
+config.yaml
+outputs/
+examples/outputs/
+examples/data/*.las
+examples/data/*.laz
+
+# ─── Web サービス（ジョブファイル） ──────────────────────
+job_data/

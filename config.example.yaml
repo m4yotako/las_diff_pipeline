@@ -1,0 +1,100 @@
+# LAS 差分パイプライン設定ファイル
+# このファイルを config.yaml にコピーして編集してください
+
+## ─────────────────────────────────────────────
+## 入出力
+## ─────────────────────────────────────────────
+io:
+  pre_las: "data/pre_disaster.las"           # 被災前の点群
+  post_las: "data/post_disaster.las"         # 被災後の点群（将来的にドローン由来）
+  # タイル分割データは配列で複数指定できる（結合して1現場として読み込む）:
+  # pre_las: ["data/pre_tile1.las", "data/pre_tile2.las"]
+  output_dir: "outputs"
+
+## ─────────────────────────────────────────────
+## 座標系
+## ─────────────────────────────────────────────
+crs:
+  # 入力CRS（LASヘッダにSRSが無い／信頼できない場合のフォールバック）
+  # JGD2011 平面直角座標系の例:
+  #   1系=6669, 2系=6670, ..., 7系=6675, 9系=6677, ..., 19系=6687
+  input_epsg: 6677                            # ← 実データに合わせて必ず変更
+  # 出力CRS（Google Maps は WGS84 のみ）
+  output_epsg: 4326
+  # 内部処理（M3C2、ICP等）で使う投影。通常 input と同じメートル系を使う
+  work_epsg: 6677
+
+## ─────────────────────────────────────────────
+## 前処理
+## ─────────────────────────────────────────────
+preprocess:
+  # 統計的外れ値除去（SOR）
+  sor:
+    enabled: true
+    nb_neighbors: 16
+    std_ratio: 2.0
+  # ボクセルダウンサンプリング（メートル）
+  voxel_size: 0.25
+  # 地盤分類（CSF 簡易版）
+  ground_filter:
+    enabled: false                             # true: 地盤点のみ抽出
+    cloth_resolution: 1.0
+    rigidness: 2
+  # 解析対象範囲（メートル, work_epsg 系）。null なら全範囲
+  bbox: null                                  # 例: [minx, miny, maxx, maxy]
+
+## ─────────────────────────────────────────────
+## 位置合わせ（ICP）
+## ─────────────────────────────────────────────
+registration:
+  enabled: true
+  # 安定領域ポリゴン（被災していない領域）。GeoJSON or Shapefile
+  stable_mask: null                           # 例: "data/stable_area.geojson"
+  max_iterations: 50
+  threshold: 0.5                              # メートル
+
+## ─────────────────────────────────────────────
+## 差分計算
+## ─────────────────────────────────────────────
+difference:
+  method: "m3c2"                              # "m3c2" or "dsm"
+  # M3C2 パラメータ
+  m3c2:
+    normal_scale: 2.0                         # 法線推定スケール（m）
+    projection_scale: 1.0                     # 投影シリンダ半径（m）
+    max_depth: 10.0                           # 探索深さ（m）
+  # DSM差分パラメータ
+  dsm:
+    resolution: 0.5                           # ピクセルサイズ（m）
+    method: "max"                             # max / mean / min / idw
+
+## ─────────────────────────────────────────────
+## スコアリング
+## ─────────────────────────────────────────────
+scoring:
+  # 集約された dz の絶対値で 0〜3 にビニング（土砂・地盤向け）
+  # スコア   閾値範囲（|dz|, m）        意味
+  #   0       0 〜 thresholds[0]        変化なし
+  #   1       thresholds[0] 〜 [1]      軽微
+  #   2       thresholds[1] 〜 [2]      中度
+  #   3       thresholds[2] 〜          甚大
+  thresholds: [0.3, 1.0, 3.0]
+  # 統計的有意性で足切り（M3C2のLoD95を使う場合）
+  use_significance: true
+  # 建物単位の追加ルール
+  building_rules:
+    loss_ratio_collapse: 0.6                  # 点喪失率 >= 0.6 → 倒壊扱い
+
+## ─────────────────────────────────────────────
+## 集約
+## ─────────────────────────────────────────────
+aggregation:
+  unit: "grid"                                # "grid" or "building"
+  grid:
+    cell_size: 5.0                            # メートル
+    min_points: 10                            # セル内最低点数
+  building:
+    source: "osm"                             # "osm" or "file"
+    file: null                                # source=file の場合のポリゴンファイル
+    bbox: null                                # OSM取得範囲（input_epsg）
+    buffer: 0.5                               # 建物外周をどれだけ膨らませて点を拾うか

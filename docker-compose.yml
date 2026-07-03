@@ -1,0 +1,57 @@
+services:
+
+  # ─── API サーバー ─────────────────────────────────────────
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - job_data:/data/jobs
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - JOBS_BASE=/data/jobs
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── RQ ワーカー ──────────────────────────────────────────
+  # パイプラインの重い処理をここで実行する。
+  # ワーカーを増やす場合は `docker compose up --scale worker=3` で起動。
+  worker:
+    build: .
+    command: >
+      rq worker
+      --url redis://redis:6379
+      --with-scheduler
+    volumes:
+      - job_data:/data/jobs
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - JOBS_BASE=/data/jobs
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Redis ───────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  job_data:
+    # API サーバーとワーカーがジョブファイルを共有するための名前付きボリューム。
+    # ホスト側の特定ディレクトリにマウントしたい場合は以下のように変更:
+    # driver: local
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /path/to/your/jobs

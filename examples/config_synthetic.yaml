@@ -1,0 +1,43 @@
+# Synthetic data with ICP enabled. Open3D recommended (scipy fallback works too).
+io:
+  pre_las: "data/pre_synthetic.las"
+  post_las: "data/post_synthetic.las"
+  output_dir: "outputs/synthetic"
+
+crs:
+  input_epsg: 6677
+  output_epsg: 4326
+  work_epsg: 6677
+
+preprocess:
+  sor:
+    enabled: true
+    k: 16
+    z: 2.0
+  voxel_size: 0.2
+  ground_filter:
+    enabled: false
+  bbox: null
+
+registration:
+  enabled: true
+  max_iterations: 50
+  threshold: 0.5
+
+difference:
+  method: "dsm"
+  dsm:
+    resolution: 0.5
+    method: "max"
+
+scoring:
+  thresholds: [0.3, 1.0, 3.0]
+  use_significance: false
+  building_rules:
+    loss_ratio_collapse: 0.6
+
+aggregation:
+  unit: "grid"
+  grid:
+    cell_size: 4.0
+    min_points: 4

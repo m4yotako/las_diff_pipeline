@@ -1,0 +1,39 @@
+# Synthetic data, no Open3D needed. Quick smoke test.
+io:
+  pre_las: "data/pre_synthetic.las"
+  post_las: "data/post_synthetic.las"
+  output_dir: "outputs/synthetic"
+
+crs:
+  input_epsg: 6677
+  output_epsg: 4326
+  work_epsg: 6677
+
+preprocess:
+  sor:
+    enabled: false
+  voxel_size: null
+  ground_filter:
+    enabled: false
+  bbox: null
+
+registration:
+  enabled: false
+
+difference:
+  method: "dsm"
+  dsm:
+    resolution: 0.5
+    method: "max"
+
+scoring:
+  thresholds: [0.3, 1.0, 3.0]
+  use_significance: false
+  building_rules:
+    loss_ratio_collapse: 0.6
+
+aggregation:
+  unit: "grid"
+  grid:
+    cell_size: 4.0
+    min_points: 4

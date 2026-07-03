@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>被害スコアマップ — Google Maps</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #map { position: absolute; top: 0; left: 0; right: 340px; bottom: 0; }
+  #panel { position: absolute; top: 0; right: 0; width: 340px; bottom: 0; background: #fafafa;
+           border-left: 1px solid #ddd; padding: 16px; overflow-y: auto; box-sizing: border-box; }
+  h1 { font-size: 17px; margin: 0 0 6px 0; }
+  h2 { font-size: 13px; margin: 18px 0 6px 0; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
+  .legend-item { display: flex; align-items: center; margin: 4px 0; font-size: 13px; }
+  .legend-color { width: 22px; height: 22px; margin-right: 8px; border-radius: 3px; border: 1px solid #999; }
+  .stat-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
+  .filter-buttons { display: flex; gap: 4px; margin-bottom: 8px; }
+  .filter-buttons button { flex: 1; padding: 6px 4px; border: 1px solid #ccc; border-radius: 4px;
+                            background: white; cursor: pointer; font-size: 12px; }
+  .filter-buttons button.active { background: #2c3e50; color: white; border-color: #2c3e50; }
+  #status { padding: 8px 10px; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 4px;
+            margin-bottom: 8px; font-size: 12px; }
+  .status-ok  { background: #d4edda; border-color: #c3e6cb; }
+  .status-err { background: #f8d7da; border-color: #f5c6cb; }
+  .control-row { font-size: 12px; margin: 4px 0; display: flex; align-items: center; gap: 6px; }
+  input[type=range] { flex: 1; }
+  .hint { font-size: 11px; color: #888; margin: 4px 0 8px 0; line-height: 1.4; }
+  .swatch-inline { display: inline-block; vertical-align: middle; width: 14px; height: 14px; border-radius: 2px; margin-right: 4px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<aside id="panel">
+  <h1>被害スコアマップ (Google Maps)</h1>
+  <p class="hint">API キー必須版。`?key=YOUR_KEY` を URL に付与してください。</p>
+  <div id="status">準備中…</div>
+  <h2>データ</h2>
+  <input type="file" id="file-input" accept=".geojson,.json">
+  <h2>フィルタ</h2>
+  <div class="filter-buttons" id="filter-buttons">
+    <button data-min="0" class="active">全て</button>
+    <button data-min="1">≥1</button>
+    <button data-min="2">≥2</button>
+    <button data-min="3">3のみ</button>
+  </div>
+  <h2>凡例</h2>
+  <div id="legend">
+    <div class="legend-item"><div class="legend-color" style="background:#2ecc71"></div>0: 変化なし</div>
+    <div class="legend-item"><div class="legend-color" style="background:#f1c40f"></div>1: 軽微</div>
+    <div class="legend-item"><div class="legend-color" style="background:#e67e22"></div>2: 中度</div>
+    <div class="legend-item"><div class="legend-color" style="background:#c0392b"></div>3: 甚大</div>
+  </div>
+  <h2>表示</h2>
+  <div class="control-row">
+    <label><input type="checkbox" id="show-borders" checked> セル境界</label>
+  </div>
+  <div class="control-row">
+    <span>不透明度</span><input type="range" id="opacity" min="0" max="100" value="60">
+    <span id="opacity-val">60%</span>
+  </div>
+  <h2>統計</h2>
+  <div id="stats">—</div>
+</aside>
+
+<script>
+  const COLORS = ["#2ecc71", "#f1c40f", "#e67e22", "#c0392b"];
+  const DEFAULT_CENTER = { lat: 37.28, lng: 136.73 };
+  let map, dataLayer, allFeatures = [], currentMinScore = 0, infoWin;
+
+  function initMap() {
+    map = new google.maps.Map(document.getElementById("map"), {
+      center: DEFAULT_CENTER, zoom: 16, mapTypeId: "satellite",
+      tilt: 0, mapTypeControl: true, streetViewControl: false
+    });
+    infoWin = new google.maps.InfoWindow();
+    dataLayer = new google.maps.Data({ map });
+    dataLayer.addListener("click", onFeatureClick);
+    tryAutoLoad();
+  }
+
+  async function tryAutoLoad() {
+    const candidates = [
+      "./damage_score.geojson",
+      "../examples/outputs/realdata/damage_score.geojson",
+      "../examples/outputs/synthetic/damage_score.geojson"
+    ];
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, { cache: "no-cache" });
+        if (res.ok) { loadGeoJSON(await res.json(), url); return; }
+      } catch (e) {}
+    }
+    setStatus("GeoJSONを自動取得できませんでした。ファイルを選択してください。", "err");
+  }
+
+  function loadGeoJSON(gj, source) {
+    dataLayer.forEach(f => dataLayer.remove(f));
+    allFeatures = gj.features || [];
+    dataLayer.addGeoJson(gj);
+    applyStyle();
+    const b = new google.maps.LatLngBounds();
+    dataLayer.forEach(f => f.getGeometry().forEachLatLng(ll => b.extend(ll)));
+    if (!b.isEmpty()) map.fitBounds(b);
+    updateStats();
+    setStatus(`${allFeatures.length} 件読み込み完了 (${source})`, "ok");
+  }
+
+  function applyStyle() {
+    const opacity = parseInt(document.getElementById("opacity").value, 10) / 100;
+    const sb = document.getElementById("show-borders").checked;
+    dataLayer.setStyle(feature => {
+      const s = Number(feature.getProperty("damage_score") ?? 0);
+      const visible = s >= currentMinScore;
+      return {
+        fillColor: COLORS[s] || "#aaa",
+        fillOpacity: visible ? opacity : 0,
+        strokeWeight: visible && sb ? 0.4 : 0,
+        strokeColor: "#222",
+        clickable: visible,
+        zIndex: s
+      };
+    });
+  }
+
+  function updateStats() {
+    const c = [0, 0, 0, 0];
+    allFeatures.forEach(f => {
+      const s = Number((f.properties || {}).damage_score ?? 0);
+      if (s >= 0 && s < 4) c[s]++;
+    });
+    const total = c.reduce((a, b) => a + b, 0) || 1;
+    const rows = c.map((cnt, i) =>
+      `<div class="stat-row"><span><span class="swatch-inline" style="background:${COLORS[i]}"></span>Score ${i}</span><b>${cnt} (${(100*cnt/total).toFixed(1)}%)</b></div>`).join("");
+    document.getElementById("stats").innerHTML =
+      `<div class="stat-row"><span>総数</span><b>${total}</b></div>` + rows;
+  }
+
+  function onFeatureClick(e) {
+    const get = k => e.feature.getProperty(k);
+    const score = Number(get("damage_score") ?? 0);
+    const fmt = v => (typeof v === "number" && Number.isFinite(v)) ? v.toFixed(3) + " m" : "—";
+    const html = `
+      <div style="min-width:180px;">
+        <h3 style="margin:0 0 6px 0;font-size:14px;">${get("id") ?? "—"}</h3>
+        <b style="color:${COLORS[score]};font-size:16px;">score ${score}</b><br>
+        dz_mean: ${fmt(get("dz_mean"))}<br>
+        dz_p95: ${fmt(get("dz_p95"))}<br>
+        点数: ${get("n_points") ?? get("n_points_post") ?? "—"}
+      </div>`;
+    infoWin.setContent(html);
+    infoWin.setPosition(e.latLng);
+    infoWin.open(map);
+  }
+
+  function setStatus(msg, cls) {
+    const el = document.getElementById("status");
+    el.textContent = msg; el.className = "";
+    if (cls) el.classList.add("status-" + cls);
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("file-input").addEventListener("change", e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try { loadGeoJSON(JSON.parse(ev.target.result), file.name); }
+        catch (err) { setStatus("JSON parse error: " + err.message, "err"); }
+      };
+      reader.readAsText(file);
+    });
+    document.querySelectorAll("#filter-buttons button").forEach(b => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll("#filter-buttons button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        currentMinScore = parseInt(b.dataset.min, 10);
+        if (dataLayer) applyStyle();
+      });
+    });
+    document.getElementById("show-borders").addEventListener("change", () => { if (dataLayer) applyStyle(); });
+    document.getElementById("opacity").addEventListener("input", e => {
+      document.getElementById("opacity-val").textContent = e.target.value + "%";
+      if (dataLayer) applyStyle();
+    });
+  });
+</script>
+<script>
+  (function() {
+    const urlKey = new URLSearchParams(location.search).get("key");
+    const apiKey = urlKey || "YOUR_API_KEY_HERE";
+    if (apiKey === "YOUR_API_KEY_HERE") {
+      document.getElementById("status").textContent =
+        "Google Maps API キー未設定。?key=XXX を URL に追加するか、API キー不要の index_osm.html を使ってください。";
+      document.getElementById("status").className = "status-err";
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(apiKey) + "&callback=initMap&v=weekly";
+    s.async = true; s.defer = true;
+    document.head.appendChild(s);
+  })();
+</script>
+</body>
+</html>

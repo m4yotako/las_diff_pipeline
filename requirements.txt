@@ -1,0 +1,43 @@
+# コア
+numpy>=1.24
+scipy>=1.10
+pyyaml>=6.0
+
+# 点群I/O
+laspy[lazrs]>=2.5
+# open3d>=0.18 はオプション（Linux ホイール 447MB）。
+# なくても registration.py の scipy ICP フォールバックで動作する。
+# Docker 環境では原則コメントアウトのまま。ローカルで精度重視の場合はコメントを外す。
+# open3d>=0.19
+
+# pdal は conda 経由のインストールを推奨（M3C2 を使う場合のみ）
+# conda install -c conda-forge pdal python-pdal
+# ※ pdal filters.m3c2 は PDAL 2.8.x には存在しないため、現状 M3C2 は未対応。
+
+# 地理空間
+pyproj>=3.6
+shapely>=2.0
+geopandas>=0.14
+rasterio>=1.3
+fiona>=1.9
+
+# ユーティリティ
+tqdm>=4.66
+click>=8.1                 # CLI（argparse でもよいがクリックの方がメンテしやすい）
+
+# OSM建物取得（aggregation.unit=building, source=osm のとき）
+# Docker ビルド時間削減のためデフォルトでコメントアウト。
+# 建物単位の集約が必要な場合はコメントを外してビルドし直す。
+# osmnx>=1.9
+
+# --- Webサービス化 ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+python-multipart>=0.0.9    # FastAPI で UploadFile を使うために必須
+rq>=2.0                    # ジョブキュー（Redis Queue）
+redis>=5.0.0               # RQ の対応バージョン: Redis >= 5
+
+# 開発用（任意）
+# pytest
+# black
+# ruff

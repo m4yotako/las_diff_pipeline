@@ -1,0 +1,47 @@
+# Template for real data + OSM building polygons.
+# Fill pre_las / post_las / bbox according to your data.
+io:
+  pre_las: "/path/to/pre.las"
+  post_las: "/path/to/post.las"
+  output_dir: "outputs/realdata"
+
+crs:
+  input_epsg: 6675
+  output_epsg: 4326
+  work_epsg: 6675
+
+preprocess:
+  sor:
+    enabled: true
+    k: 16
+    z: 2.0
+  voxel_size: 0.1
+  ground_filter:
+    enabled: false
+  bbox: null
+
+registration:
+  enabled: true
+  max_iterations: 60
+
+difference:
+  method: "dsm"
+  dsm:
+    resolution: 0.5
+    method: "max"
+
+scoring:
+  thresholds: [0.3, 1.0, 3.0]
+  use_significance: false
+  building_rules:
+    loss_ratio_collapse: 0.6
+    loss_ratio_min_dz: 1.5
+    min_pre_points: 30
+    thresholds: [0.3, 1.0, 3.0]
+
+aggregation:
+  unit: "building"
+  building:
+    source: "osm"
+    bbox: null
+    buffer: 0.5
