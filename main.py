@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ from pipeline.config import Config, load_config
 from pipeline.io_las import read_multi, write_las
 from pipeline.preprocess import preprocess
 from pipeline.registration import icp_align
+from pipeline.vertical_align import align_vertical
 from pipeline.difference import m3c2, dsm_diff, write_geotiff
 from pipeline.aggregation import aggregate_grid, aggregate_buildings, load_buildings
 from pipeline.scoring import apply_significance
@@ -59,14 +61,21 @@ def run(
 
     # ─── 1. 読み込み ───
     # io.pre_las / io.post_las は単一パスまたはリスト（タイル分割データ）を許容する。
-    def _resolve_las_paths(key: str) -> list:
-        value = cfg.io[key]
-        values = value if isinstance(value, list) else [value]
-        return [cfg.resolve_path(v) for v in values]
+    # 各要素は文字列パス、または {path, vertical_datum} 形式の辞書を許容する（後方互換）。
+    def _read_las_group(key: str, fallback_epsg):
+        entries = cfg.io_entry(key)
+        pc = read_multi([e["path"] for e in entries], fallback_epsg=fallback_epsg)
+        # 全ファイルで vertical_datum が揃っている場合のみ採用（メタ情報として記録するのみ）。
+        vdatums = {e["vertical_datum"] for e in entries if e["vertical_datum"]}
+        if len(vdatums) == 1:
+            pc.vertical_datum = next(iter(vdatums))
+        elif len(vdatums) > 1:
+            logging.warning("%s: vertical_datum が複数混在しています: %s", key, vdatums)
+        return pc
 
     _step("1/7: Read LAS")
-    pre = read_multi(_resolve_las_paths("pre_las"), fallback_epsg=input_epsg)
-    post = read_multi(_resolve_las_paths("post_las"), fallback_epsg=input_epsg)
+    pre = _read_las_group("pre_las", input_epsg)
+    post = _read_las_group("post_las", input_epsg)
     if pre.crs_epsg is None:
         pre.crs_epsg = input_epsg
     if post.crs_epsg is None:
@@ -83,6 +92,15 @@ def run(
 
     # ─── 3. 位置合わせ ───
     _step("3/7: Registration")
+
+    # 3a. 鉛直基準（楕円体高/標高など）のズレ補正。ICPより前に行う。
+    #     大きなZオフセットが残ったままICPにかけると対応点が見つからず、
+    #     変換が単位行列のまま終了してしまうことがあるため。
+    post, va_info = align_vertical(pre, post, cfg.vertical_alignment)
+    if va_info.get("enabled"):
+        with open(out_dir / "vertical_alignment.json", "w", encoding="utf-8") as f:
+            json.dump(va_info, f, ensure_ascii=False, indent=2)
+
     reg_cfg = cfg.registration
     if reg_cfg.get("enabled", True):
         post, T = icp_align(

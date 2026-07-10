@@ -5,18 +5,11 @@
 ## 入出力
 ## ─────────────────────────────────────────────
 io:
-  pre_las: "data/pre_disaster.las"           # 被災前の点群
-  post_las: "data/post_disaster.las"         # 被災後の点群（将来的にドローン由来）
+  pre_las: "D:/notowest14/07FD2032.las"           # 被災前の点群
+  post_las: "D:/ground_data_07fd1_2025/07fd203_grd.las"   # 被災後の点群（地盤フィルタ済み）
   # タイル分割データは配列で複数指定できる（結合して1現場として読み込む）:
   # pre_las: ["data/pre_tile1.las", "data/pre_tile2.las"]
-  #
-  # pre/post の提供元が異なり、鉛直基準（楕円体高/標高）が分かっている場合は
-  # 辞書形式で指定できる（現時点ではメタ情報として記録されるのみで、自動換算はしない。
-  # 実際のズレ補正は下記 vertical_alignment を使うこと）:
-  # pre_las:
-  #   path: "data/pre_disaster.las"
-  #   vertical_datum: "ellipsoidal"            # "ellipsoidal"（楕円体高） or "orthometric"（標高）
-  output_dir: "outputs"
+  output_dir: "outputs/realdata"
 
 ## ─────────────────────────────────────────────
 ## 座標系
@@ -25,11 +18,11 @@ crs:
   # 入力CRS（LASヘッダにSRSが無い／信頼できない場合のフォールバック）
   # JGD2011 平面直角座標系の例:
   #   1系=6669, 2系=6670, ..., 7系=6675, 9系=6677, ..., 19系=6687
-  input_epsg: 6677                            # ← 実データに合わせて必ず変更
+  input_epsg: 6675                            # 能登西部14系（JGD2011 平面直角7系）
   # 出力CRS（Google Maps は WGS84 のみ）
   output_epsg: 4326
   # 内部処理（M3C2、ICP等）で使う投影。通常 input と同じメートル系を使う
-  work_epsg: 6677
+  work_epsg: 6675
 
 ## ─────────────────────────────────────────────
 ## 前処理
@@ -53,15 +46,14 @@ preprocess:
 ## ─────────────────────────────────────────────
 ## 鉛直基準（Z）ズレ補正
 ## ─────────────────────────────────────────────
-# pre/post が異なる鉛直基準系（楕円体高 vs 標高など）で作られていると、
-# DSM差分にメートル単位の一様なオフセットが混入し、被害が無い場所まで
-# 誤って高スコア判定されることがある。ICPより前に実行される。
+# notowest14（PRE）は楕円体高、ground_data_07fd1_2025（POST）は標高で作成されている
+# ことがドキュメントから判明済み（能登地域のジオイド高〜36m相当のズレを確認済み）。
+# 正式なジオイドモデルは未使用のため、近傍点高さ差の中央値による自動補正を使う。
 vertical_alignment:
-  enabled: false                              # 既存configの挙動を変えないためデフォルト無効
-  mode: "auto"                                # "auto"（近傍点高さ差の中央値で自動推定） or "manual"
-  offset_m: null                              # mode="manual" のとき使う固定オフセット（post - pre）
-  warn_threshold_m: 1.0                       # これを超えるオフセットが適用されたら警告ログを出す
-  max_xy_dist: 1.0                            # mode="auto" のXY近傍探索半径（メートル）
+  enabled: true
+  mode: "auto"
+  warn_threshold_m: 1.0
+  max_xy_dist: 1.0
 
 ## ─────────────────────────────────────────────
 ## 位置合わせ（ICP）
@@ -77,7 +69,7 @@ registration:
 ## 差分計算
 ## ─────────────────────────────────────────────
 difference:
-  method: "m3c2"                              # "m3c2" or "dsm"
+  method: "dsm"                               # "m3c2" は未実装(PDAL 2.8.xにfilters.m3c2が無い)のため "dsm" を使用
   # M3C2 パラメータ
   m3c2:
     normal_scale: 2.0                         # 法線推定スケール（m）
